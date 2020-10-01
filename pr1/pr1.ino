@@ -13,7 +13,7 @@ portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED; //variable encargada de si
 //Declaro variables necesarias para el PWM (https://randomnerdtutorials.com/esp32-pwm-arduino-ide/)
 const int freq = 5000;                //Frecuencia de 5kHz 
 const int channel = 0;                //Canal del PWM. Opciones disponibles 0-15
-const int resolution = 12;            //Escojo una resolución de 12 bits para el duty. Con esto la resolución es de 0 a 4095, ahorrandome la conversión de la salida del ADC.
+const int resolution = 12;            //Escojo una resolución de 12 bits. Con esto la resolución es de 0 a 4095, ahorrandome la conversión de la salida del ADC.
 
 void IRAM_ATTR onTimer() {              //Esta funión incrementa el contador de interrupciones. Al aumentar el contador, el loop principal sabe que ha ocurrido una interrupción
   portENTER_CRITICAL_ISR(&timerMux);
@@ -46,10 +46,14 @@ void loop() {
   interrupcion();
   
   ledcWrite(channel, duty);
+
+  recibeComando();
+  //Serial.println(voltage); 
   
 }
 
 void interrupcion(){
+  
   if (interruptCounter > 0) {
 
     portENTER_CRITICAL(&timerMux);
@@ -59,7 +63,40 @@ void interrupcion(){
     totalInterruptCounter++;                //Numero de interrupciones total que ocurren
     
     voltage = analogRead(pin)*3.3/4095;   //Obtiene el voltaje de salida. 
-    duty = analogRead(pin);
+    //duty = analogRead(pin);
+    Serial.println(voltage);
+  }
+}
+
+void recibeComando(){
+  String comando = "";
+  if (Serial.available()) {
+   comando = Serial.readString();
+  }
+
+  if (comando == "ADC") {
+    //Serial.println("Comando ADC()");
+    Serial.println(voltage);
+    comando = "";
+    
+  } else if (comando.startsWith("ADC(")){
+    comando.remove(-1);
+    comando.remove(0, 4);
+    int x = comando.toInt();
+    timerAlarmWrite(timer, 1000000 * x, true);
+    
+  } else if (comando == "PWM(") {
+    comando.remove(-1);
+    comando.remove(0, 4);
+    int x = comando.toInt();
+      if (x > 9 || x < 0){
+        Serial.println("Número no valido. Por favor introduzca un número del 0 al 9");
+      } else {
+        duty = x * 4095 / 9;
+        ledcWrite(channel, duty);
+      }
+  } else {
     
   }
 }
+

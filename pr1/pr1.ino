@@ -9,6 +9,8 @@ int pwm = 17;
 float voltage;
 float duty = 0;
 int x = 0;
+int ledPIN = 0;
+int contadorLED = 0;
 
 //Declaro variables necesarias para los timers:
 volatile int interruptCounter;
@@ -60,41 +62,22 @@ void I2CwriteByte(uint8_t Address, uint8_t Register, uint8_t Data)
    Wire.endTransmission();
 }
 
-uint8_t Buf[14];
-
 //Entrada en el timer
 void IRAM_ATTR onTimer() {              //Esta función incrementa el contador de interrupciones. Al aumentar el contador, el loop principal sabe que ha ocurrido una interrupción
   portENTER_CRITICAL_ISR(&timerMux);    //Aquí entro en la sección crítica de la interrupción
   interruptCounter++;                   //Se ejecuta lo que me interesa dentro del timer
   voltage = analogRead(pin)*3.3/4095;   //Obtiene el voltaje de salida. 
-  //aX, aY, aZ, gX, gY, gZ = acellSensor();  ¿Por que no funciona?
-  uint8_t Buf[14];
-  I2Cread(MPU9250_ADDRESS, 0x3B, 14, Buf);
- 
-  // Convertir registros acelerometro
-  aX = (Buf[0] << 8 | Buf[1]);    //Desplazo el bit 0 a la izquierda 8 posiciones y aplico el operador OR a la posición 1
-  aY = (Buf[2] << 8 | Buf[3]);
-  aZ = Buf[4] << 8 | Buf[5];
-
-  //Serial.println(aX);
-  
-   // Convertir registros giroscopio
-  gX = (Buf[8] << 8 | Buf[9]);
-  gY = (Buf[10] << 8 | Buf[11]);
-  gZ = Buf[12] << 8 | Buf[13];
   contadorADC++;
   contadorSensor++;
   portEXIT_CRITICAL_ISR(&timerMux);     //Sale de la sección crítica del timer
+  contadorLED--;
 }
 
 void setup() {
   pinMode(pin, INPUT);
-  pinMode(pwm, OUTPUT);
-  
+  pinMode(pwm, OUTPUT);  
   Serial.begin(115200); 
-
   delay(2000);
-  
   timer = timerBegin(0, 80, true); // Inicializo el timer. 
                                    // 1ºArg: El cero indica el hardware que utilizamos (hay 4). 
                                    // 2ºArg: Apartado 2: 80 es el factor por el que dividimos la frecuencia para obtener una frecuencia de 1MHz. 
@@ -109,8 +92,8 @@ void setup() {
   ledcSetup(channel, freq, resolution);
   ledcAttachPin(pwm, channel);
 
-  delay(1000);
-  
+  pinMode(ledPIN , OUTPUT);
+
   Wire.begin();
   // Configurar acelerometro
   I2CwriteByte(MPU9250_ADDRESS, 28, ACC_FULL_SCALE_16_G);        //El registro 28 (escrito en decimal) se utiliza para configurar el acelerometro
@@ -132,16 +115,29 @@ void setup() {
   Serial.println("Giro en Z");
   //t_cero = now();
 
-  I2Cread(MPU9250_ADDRESS, 0x3B, 14, Buf);
+  uint8_t buf_off[14];
+  I2Cread(MPU9250_ADDRESS, 0x3B, 14, buf_off);
 
-  aX_offset = -(Buf[0] << 8 | Buf[1]);    //Desplazo el bit 0 a la izquierda 8 posiciones y aplico el operador OR a la posición 1
-  aY_offset = -(Buf[2] << 8 | Buf[3]);
-  aZ_offset = Buf[4] << 8 | Buf[5];
+  aX_offset = -(buf_off[0] << 8 | buf_off[1]);    //Desplazo el bit 0 a la izquierda 8 posiciones y aplico el operador OR a la posición 1
+  aY_offset = -(buf_off[2] << 8 | buf_off[3]);
+  aZ_offset = buf_off[4] << 8 | buf_off[5];
 
    // Convertir registros giroscopio
-  gX_offset = -(Buf[8] << 8 | Buf[9]);
-  gY_offset = -(Buf[10] << 8 | Buf[11]);
-  gZ_offset = Buf[12] << 8 | Buf[13];
+  gX_offset = -(buf_off[8] << 8 | buf_off[9]);
+  gY_offset = -(buf_off[10] << 8 | buf_off[11]);
+  gZ_offset = buf_off[12] << 8 | buf_off[13];
+
+//  Serial.print(aX_offset,DEC);
+//  Serial.print(";");
+//  Serial.print(aY_offset,DEC);
+//  Serial.print(";");
+//  Serial.print(aZ_offset,DEC);
+//  Serial.print(";");
+//  Serial.print(gX_offset,DEC);
+//  Serial.print(";");
+//  Serial.print(gY_offset,DEC);
+//  Serial.print(";");
+//  Serial.println(gZ_offset,DEC);
 }
 
 void loop() {
@@ -155,25 +151,31 @@ void loop() {
     contadorADC = 0;
     Serial.println(voltage);
   }
+
+  if (contadorLED > 0){
+    digitalWrite(ledPIN , HIGH);
+  } else {
+    digitalWrite(ledPIN , LOW);
+  }
   
   if (contadorSensor == 10){
+    contadorLED = 2;
     contadorSensor = 0;
     //time_t t = now(); 
     //Serial.print(t - t_cero);
     //Serial.print(";");
-    Serial.print((aX - aX_offset),DEC);
+    Serial.print(aX,DEC);
     Serial.print(";");
-    Serial.print((aY - aY_offset),DEC);
+    Serial.print(aY,DEC);
     Serial.print(";");
-    Serial.print((aZ - aZ_offset),DEC);
+    Serial.print(aZ,DEC);
     Serial.print(";");
-    Serial.print((gX - gX_offset),DEC);
+    Serial.print(gX,DEC);
     Serial.print(";");
-    Serial.print((gY - gY_offset),DEC);
+    Serial.print(gY,DEC);
     Serial.print(";");
-    Serial.println((gZ - gZ_offset),DEC);
+    Serial.println(gZ,DEC);
   }
-  
 }
 
 void interrupcion(){
@@ -181,11 +183,26 @@ void interrupcion(){
   if (interruptCounter > 0) {
     interruptCounter = 0;
     totalInterruptCounter++;                //Numero de interrupciones total que ocurren
-    //Serial.print(totalInterruptCounter);
-    //duty = analogRead(pin);
-//    if (x > 0) {                            //Solo le permito mostrar el valor del voltaje si el valor de x es mayor que cero.
-//      Serial.println(voltage);
-//    }
+    uint8_t Buf[14];
+    I2Cread(MPU9250_ADDRESS, 0x3B, 14, Buf);
+ 
+    // Convertir registros acelerometro
+    int16_t ax = -(Buf[0] << 8 | Buf[1]);    //Desplazo el bit 0 a la izquierda 8 posiciones y aplico el operador OR a la posición 1
+    int16_t ay = -(Buf[2] << 8 | Buf[3]);
+    int16_t az = Buf[4] << 8 | Buf[5];
+ 
+    // Convertir registros giroscopio
+    int16_t gx = -(Buf[8] << 8 | Buf[9]);
+    int16_t gy = -(Buf[10] << 8 | Buf[11]);
+    int16_t gz = Buf[12] << 8 | Buf[13];
+
+    aX = ax - aX_offset;
+    aY = ay - aY_offset;
+    aZ = az - aZ_offset;
+
+    gX = gx - gX_offset;
+    gY = gy - gY_offset;
+    gZ = gz - gZ_offset;
   }
 }
 
@@ -228,21 +245,3 @@ void recibeComando(){
     
   }
 }
-
-float acellSensor(){
-   uint8_t Buf[14];
-   I2Cread(MPU9250_ADDRESS, 0x3B, 14, Buf);
- 
-   // Convertir registros acelerometro
-   int16_t ax = -(Buf[0] << 8 | Buf[1]);    //Desplazo el bit 0 a la izquierda 8 posiciones y aplico el operador OR a la posición 1
-   int16_t ay = -(Buf[2] << 8 | Buf[3]);
-   int16_t az = Buf[4] << 8 | Buf[5];
- 
-   // Convertir registros giroscopio
-   int16_t gx = -(Buf[8] << 8 | Buf[9]);
-   int16_t gy = -(Buf[10] << 8 | Buf[11]);
-   int16_t gz = Buf[12] << 8 | Buf[13];
-   return ax, ay, az, gx, gy, gz;
-}
-
-

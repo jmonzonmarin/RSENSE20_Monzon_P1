@@ -2,7 +2,6 @@
 
 //Incluyo la libreria necesaria para el I2C
 #include <Wire.h>
-//#include <TimeLib.h> 
 
 int pin = 32;
 int pwm = 17;
@@ -24,20 +23,20 @@ const int channel = 0;                //Canal del PWM. Opciones disponibles 0-15
 const int resolution = 12;            //Escojo una resolución de 12 bits. Con esto la resolución es de 0 a 4095, ahorrandome la conversión de la salida del ADC.
 
 //Comunicación I2c
-int pinSCL = 22;
-int pinSDA = 21;
+int pinSCL = 5;
+int pinSDA = 17;
 
 //Defino la dirección del sensor y la resolución del acelerometro y giroscopo
 #define    MPU9250_ADDRESS            0x68    //Direccion del MPU
 #define    GYRO_FULL_SCALE_2000_DPS   0x18    //Escala del giroscopo de 2000º/s
-#define    ACC_FULL_SCALE_16_G        0x18    //Escala del acelerometro de +/-16g
+#define    ACC_FULL_SCALE_2_G         0x00    //Escala del acelerometro de +/-2g
+#define    A_R         ((32768.0/2.0)/9.8)    //Ratio de conversion
 
 //Variables de aceleración y giro en los distintos ejes
 
-int16_t aX, aY, aZ, gX, gY, gZ, aX_offset, aY_offset, aZ_offset, gX_offset, gY_offset, gZ_offset;
+int16_t aX, aY, aZ, gX, gY, gZ, aX_offset, aY_offset, aZ_offset, gX_offset, gY_offset, gZ_offset = 0.0;
 int contadorADC, contadorSensor = 0; 
 int periodoADC = -1;
-time_t t, t_cero;
 
 //Funcion auxiliar lectura. Referencia: https://www.luisllamas.es/usar-arduino-con-los-imu-de-9dof-mpu-9150-y-mpu-9250/
 void I2Cread(uint8_t Address, uint8_t Register, uint8_t Nbytes, uint8_t* Data)
@@ -76,8 +75,9 @@ void IRAM_ATTR onTimer() {              //Esta función incrementa el contador d
 void setup() {
   pinMode(pin, INPUT);
   pinMode(pwm, OUTPUT);  
+  pinMode(ledPIN , OUTPUT);
   Serial.begin(115200); 
-  delay(2000);
+  delay(200);
   timer = timerBegin(0, 80, true); // Inicializo el timer. 
                                    // 1ºArg: El cero indica el hardware que utilizamos (hay 4). 
                                    // 2ºArg: Apartado 2: 80 es el factor por el que dividimos la frecuencia para obtener una frecuencia de 1MHz. 
@@ -94,14 +94,12 @@ void setup() {
 
   pinMode(ledPIN , OUTPUT);
 
-  Wire.begin();
-  // Configurar acelerometro
-  I2CwriteByte(MPU9250_ADDRESS, 28, ACC_FULL_SCALE_16_G);        //El registro 28 (escrito en decimal) se utiliza para configurar el acelerometro
-  // Configurar giroscopio
+  Wire.begin(pinSDA, pinSCL);
+  // Configura la escala del acelerometro
+  I2CwriteByte(MPU9250_ADDRESS, 28, ACC_FULL_SCALE_2_G);        //El registro 28 (escrito en decimal) se utiliza para configurar el acelerometro
+  // Configura la escala del giroscopio
   I2CwriteByte(MPU9250_ADDRESS, 27, GYRO_FULL_SCALE_2000_DPS);   //El registro 27 (escrito en decimal) se utiliza para configurar el giroscopio
   
-  //Serial.print("Tiempo");
-  //Serial.print(";");
   Serial.print("Aceleracion en X");
   Serial.print(";");
   Serial.print("Aceleracion en Y");
@@ -113,31 +111,18 @@ void setup() {
   Serial.print("Giro en Y");
   Serial.print(";");
   Serial.println("Giro en Z");
-  //t_cero = now();
 
-  uint8_t buf_off[14];
-  I2Cread(MPU9250_ADDRESS, 0x3B, 14, buf_off);
+  uint8_t aceleracion_off[6];                               //Creo una cadena de 6 bytes para almacenar las distintas lecturas
+  I2Cread(MPU9250_ADDRESS, 0x3B, 6, aceleracion_off);
+    aX_offset = (aceleracion_off[0] << 8 | aceleracion_off[1])/A_R;    //Desplazo el bit 0 a la izquierda 8 posiciones y aplico el operador OR a la posición 1
+    aY_offset = (aceleracion_off[2] << 8 | aceleracion_off[3])/A_R;
+    aZ_offset = (aceleracion_off[4] << 8 | aceleracion_off[5])/A_R;
 
-  aX_offset = -(buf_off[0] << 8 | buf_off[1]);    //Desplazo el bit 0 a la izquierda 8 posiciones y aplico el operador OR a la posición 1
-  aY_offset = -(buf_off[2] << 8 | buf_off[3]);
-  aZ_offset = buf_off[4] << 8 | buf_off[5];
-
-   // Convertir registros giroscopio
-  gX_offset = -(buf_off[8] << 8 | buf_off[9]);
-  gY_offset = -(buf_off[10] << 8 | buf_off[11]);
-  gZ_offset = buf_off[12] << 8 | buf_off[13];
-
-//  Serial.print(aX_offset,DEC);
-//  Serial.print(";");
-//  Serial.print(aY_offset,DEC);
-//  Serial.print(";");
-//  Serial.print(aZ_offset,DEC);
-//  Serial.print(";");
-//  Serial.print(gX_offset,DEC);
-//  Serial.print(";");
-//  Serial.print(gY_offset,DEC);
-//  Serial.print(";");
-//  Serial.println(gZ_offset,DEC);
+  uint8_t giroscopo_off[6];
+  I2Cread(MPU9250_ADDRESS, 0x43, 6, giroscopo_off);
+    gX_offset = giroscopo_off[0] << 8 | giroscopo_off[1];
+    gY_offset = giroscopo_off[2] << 8 | giroscopo_off[3];
+    gZ_offset = giroscopo_off[4] << 8 | giroscopo_off[5];
 }
 
 void loop() {
@@ -161,9 +146,6 @@ void loop() {
   if (contadorSensor == 10){
     contadorLED = 2;
     contadorSensor = 0;
-    //time_t t = now(); 
-    //Serial.print(t - t_cero);
-    //Serial.print(";");
     Serial.print(aX,DEC);
     Serial.print(";");
     Serial.print(aY,DEC);
@@ -183,26 +165,19 @@ void interrupcion(){
   if (interruptCounter > 0) {
     interruptCounter = 0;
     totalInterruptCounter++;                //Numero de interrupciones total que ocurren
-    uint8_t Buf[14];
-    I2Cread(MPU9250_ADDRESS, 0x3B, 14, Buf);
  
     // Convertir registros acelerometro
-    int16_t ax = -(Buf[0] << 8 | Buf[1]);    //Desplazo el bit 0 a la izquierda 8 posiciones y aplico el operador OR a la posición 1
-    int16_t ay = -(Buf[2] << 8 | Buf[3]);
-    int16_t az = Buf[4] << 8 | Buf[5];
- 
-    // Convertir registros giroscopio
-    int16_t gx = -(Buf[8] << 8 | Buf[9]);
-    int16_t gy = -(Buf[10] << 8 | Buf[11]);
-    int16_t gz = Buf[12] << 8 | Buf[13];
-
-    aX = ax - aX_offset;
-    aY = ay - aY_offset;
-    aZ = az - aZ_offset;
-
-    gX = gx - gX_offset;
-    gY = gy - gY_offset;
-    gZ = gz - gZ_offset;
+    uint8_t aceleracion[6];                               //Creo una cadena de 6 bytes para almacenar las distintas lecturas
+    I2Cread(MPU9250_ADDRESS, 0x3B, 6, aceleracion);
+      aX = (aceleracion[0] << 8 | aceleracion[1])/A_R; //  - aX_offset;    //Desplazo el bit 0 a la izquierda 8 posiciones y aplico el operador OR a la posición 1
+      aY = (aceleracion[2] << 8 | aceleracion[3])/A_R; //  - aY_offset;
+      aZ = (aceleracion[4] << 8 | aceleracion[5])/A_R; //  - aZ_offset;
+      
+    uint8_t giroscopo[6];
+    I2Cread(MPU9250_ADDRESS, 0x43, 6, giroscopo);
+      gX =  (giroscopo[0] << 8 | giroscopo[1]); // - gX_offset;
+      gY =  (giroscopo[2] << 8 | giroscopo[3]); // - gX_offset;
+      gZ =  (giroscopo[4] << 8 | giroscopo[5]); // - gX_offset;
   }
 }
 
@@ -213,20 +188,14 @@ void recibeComando(){
   }
 
   if (comando == "ADC") {
-    //Serial.println("Nombre del comando: " + comando);
-    //Serial.println("Comando ADC()");
     comando = "";
-    //delay(2);
-    //Serial.println("Nombre del comando: " + comando);
     Serial.println(voltage);
-    
     
   } else if (comando.startsWith("ADC(")){
     String comando_1 = comando;
     comando.remove(-1);
     comando.remove(0, 4);
     x = comando.toInt();
-    //Serial.println(x);
     if (x > 0){                                       //Si el número de segundos es mayor que cero, el timer generara una interrupción cada x * 1s. Si es menor o igual seguira como hasta ahora
       periodoADC = x;
     }
@@ -241,7 +210,5 @@ void recibeComando(){
         duty = y * 4095 / 9;
         ledcWrite(channel, duty);
       }
-  } else {
-    
   }
 }
